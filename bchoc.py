@@ -37,6 +37,12 @@
 #   - environment variables
 #   - program exit codes
 
+import os
+import sys
+import struct
+import hashlib
+from datetime import datetime, timezone
+
 
 # ============================================================
 # Constants
@@ -79,6 +85,45 @@
 # The project recommends:
 #   "32s d 32s 32s 12s 12s 12s I"
 
+# Field sizes
+PREV_HASH_SIZE = 32
+TIMESTAMP_SIZE = 8
+CASE_ID_SIZE = 32
+ITEM_ID_SIZE = 32
+STATE_SIZE = 12
+CREATOR_SIZE = 12
+OWNER_SIZE = 12
+DATA_LENGTH_SIZE = 4
+
+# States
+STATE_INITIAL = "INITIAL"
+STATE_CHECKEDIN = "CHECKEDIN"
+STATE_CHECKEDOUT = "CHECKEDOUT"
+STATE_DISPOSED = "DISPOSED"
+STATE_DESTROYED = "DESTROYED"
+STATE_RELEASED = "RELEASED"
+
+# Passwords
+PASSWORD_CREATOR = "C67C"
+PASSWORD_POLICE = "P80P"
+PASSWORD_LAWYER = "L76L"
+PASSWORD_ANALYST = "A65A"
+PASSWORD_EXECUTIVE = "E69E"
+
+# Password → owner mapping
+PASSWORD_TO_OWNER = {
+    PASSWORD_POLICE: "POLICE",
+    PASSWORD_LAWYER: "LAWYER",
+    PASSWORD_ANALYST: "ANALYST",
+    PASSWORD_EXECUTIVE: "EXECUTIVE"
+}
+
+# AES key (used later)
+AES_KEY = b"R0chLi4uLi4uLi4="
+
+# Struct format (fixed header)
+BLOCK_STRUCT_FORMAT = "32s d 32s 32s 12s 12s 12s I"
+BLOCK_STRUCT = struct.Struct(BLOCK_STRUCT_FORMAT)
 
 # ============================================================
 # File Path Handling
@@ -92,6 +137,8 @@
 #
 # This is required for Gradescope/autograding.
 
+def get_blockchain_path():
+    return os.environ.get("BCHOC_FILE_PATH", "blockchain.dat")
 
 # ============================================================
 # Padding and Encoding Helpers
@@ -113,6 +160,9 @@
 #   checkout/checkin owner comes from password role
 #   remove owner is inherited from latest item block
 
+def pad_bytes(value: str, length: int) -> bytes:
+    b = value.encode()
+    return b.ljust(length, b'\x00')[:length]
 
 # ============================================================
 # UUID and Item ID Helpers
@@ -189,6 +239,28 @@
 #
 # The init command uses this block.
 
+def create_initial_block():
+    prev_hash = b'\x00' * 32
+    timestamp = 0.0
+    case_id = b"0" * 32
+    item_id = b"0" * 32
+    state = pad_bytes(STATE_INITIAL, STATE_SIZE)
+    creator = b'\x00' * CREATOR_SIZE
+    owner = b'\x00' * OWNER_SIZE
+    data = b"Initial block\0"
+    data_length = len(data)
+
+    return {
+        "prev_hash": prev_hash,
+        "timestamp": timestamp,
+        "case_id": case_id,
+        "item_id": item_id,
+        "state": state,
+        "creator": creator,
+        "owner": owner,
+        "data_length": data_length,
+        "data": data
+    }
 
 # ============================================================
 # Binary Packing / Unpacking
@@ -209,6 +281,18 @@
 #   Pack fixed fields.
 #   Append data bytes.
 
+def pack_block(block):
+    header = BLOCK_STRUCT.pack(
+        block["prev_hash"],
+        block["timestamp"],
+        block["case_id"],
+        block["item_id"],
+        block["state"],
+        block["creator"],
+        block["owner"],
+        block["data_length"]
+    )
+    return header + block["data"]
 
 # ============================================================
 # Hashing Helpers
@@ -236,6 +320,13 @@
 #   All blockchain data must be binary.
 #   Do not use JSON, CSV, or plain text storage.
 
+def blockchain_exists(path):
+    return os.path.exists(path)
+
+
+def write_block(path, block):
+    with open(path, "ab") as f:
+        f.write(pack_block(block))
 
 # ============================================================
 # Blockchain Search Helpers
@@ -285,6 +376,15 @@
 #       print error
 #       exit nonzero
 
+def cmd_init():
+    path = get_blockchain_path()
+
+    if not blockchain_exists(path):
+        block = create_initial_block()
+        write_block(path, block)
+        print("Blockchain file not found. Created INITIAL block.")
+    else:
+        print("Blockchain file found with INITIAL block.")
 
 # ============================================================
 # Command: add
@@ -516,3 +616,20 @@
 #
 # if __name__ == "__main__":
 #   main()
+
+def main():
+    if len(sys.argv) < 2:
+        print("No command provided")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "init":
+        cmd_init()
+    else:
+        print("Unknown command")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
