@@ -822,6 +822,86 @@ def cmd_checkin(args):
 #   Append block.
 #   Print expected output.
 
+def cmd_remove(args):
+    item_id = None
+    reason = None
+    password = None
+    owner_info = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-i" and i + 1 < len(args):
+            item_id = args[i + 1]
+            i += 2
+        elif args[i] in ["-y", "--why"] and i + 1 < len(args):
+            reason = args[i + 1]
+            i += 2
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        elif args[i] == "-o" and i + 1 < len(args):
+            owner_info = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if item_id is None:
+        exit_error("Missing item ID")
+
+    if reason is None:
+        exit_error("Missing removal reason")
+
+    if password is None or not is_creator_password(password):
+        exit_error("Invalid password")
+
+    if not validate_item_id(item_id):
+        exit_error("Invalid item ID")
+
+    if reason not in [STATE_DISPOSED, STATE_DESTROYED, STATE_RELEASED]:
+        exit_error("Invalid removal reason")
+
+    if reason == STATE_RELEASED and owner_info is None:
+        exit_error("Missing owner information")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    stored_item_id = store_item_id(item_id)
+    latest_block = get_latest_block_for_item(blocks, stored_item_id)
+
+    if latest_block is None:
+        exit_error("Item does not exist")
+
+    latest_state = get_state(latest_block)
+
+    if latest_state != STATE_CHECKEDIN:
+        exit_error("Item is not checked in")
+
+    if reason == STATE_RELEASED:
+        data = owner_info.encode()
+    else:
+        data = b""
+
+    last_block = get_last_block(blocks)
+
+    new_block = {
+        "prev_hash": hash_block(last_block),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "case_id": latest_block["case_id"],
+        "item_id": latest_block["item_id"],
+        "state": pad_bytes(reason, STATE_SIZE),
+        "creator": latest_block["creator"],
+        "owner": latest_block["owner"],
+        "data_length": len(data),
+        "data": data
+    }
+
+    write_block(path, new_block)
+
+    print(f"Case: {load_case_id(new_block['case_id'])}")
+    print(f"Removed item: {item_id}")
+    print(f"Status: {reason}")
+    print(f"Time of action: {datetime.fromtimestamp(new_block['timestamp'], timezone.utc).isoformat().replace('+00:00', 'Z')}")
 
 # ============================================================
 # Command: show cases
@@ -989,6 +1069,8 @@ def main():
         cmd_checkout(sys.argv[2:])
     elif command == "checkin":
         cmd_checkin(sys.argv[2:])
+    elif command == "remove":
+        cmd_remove(sys.argv[2:])
     else:
         exit_error("Unknown command")
 
