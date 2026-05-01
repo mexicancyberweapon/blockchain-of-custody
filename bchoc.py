@@ -923,6 +923,23 @@ def cmd_remove(args):
 #
 # Need to consider password behavior if required by tests/spec.
 
+def cmd_show_cases(args):
+    if len(args) != 0:
+        exit_error("Invalid arguments")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    seen_cases = set()
+
+    for block in blocks:
+        if get_state(block) == STATE_INITIAL:
+            continue
+
+        seen_cases.add(block["case_id"])
+
+    for stored_case_id in sorted(seen_cases):
+        print(load_case_id(stored_case_id))
 
 # ============================================================
 # Command: show items
@@ -938,6 +955,38 @@ def cmd_remove(args):
 #
 # Need to consider password behavior if required by tests/spec.
 
+def cmd_show_items(args):
+    case_id = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args):
+            case_id = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if case_id is None:
+        exit_error("Missing case ID")
+
+    if not validate_case_id(case_id):
+        exit_error("Invalid case ID")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    stored_case_id = store_case_id(case_id)
+    seen_items = set()
+
+    for block in blocks:
+        if get_state(block) == STATE_INITIAL:
+            continue
+
+        if block["case_id"] == stored_case_id:
+            seen_items.add(block["item_id"])
+
+    for stored_item_id in sorted(seen_items):
+        print(load_item_id(stored_item_id))
 
 # ============================================================
 # Command: show history
@@ -1150,6 +1199,10 @@ def main():
     elif command == "show":
         if len(sys.argv) >= 3 and sys.argv[2] == "history":
             cmd_show_history(sys.argv[3:])
+        elif len(sys.argv) >= 3 and sys.argv[2] == "cases":
+            cmd_show_cases(sys.argv[3:])
+        elif len(sys.argv) >= 3 and sys.argv[2] == "items":
+            cmd_show_items(sys.argv[3:])
         else:
             exit_error("Unknown show command")
     else:
