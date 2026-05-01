@@ -294,6 +294,30 @@ def pack_block(block):
     )
     return header + block["data"]
 
+def unpack_block(header, data):
+    (
+        prev_hash,
+        timestamp,
+        case_id,
+        item_id,
+        state,
+        creator,
+        owner,
+        data_length
+    ) = BLOCK_STRUCT.unpack(header)
+
+    return {
+        "prev_hash": prev_hash,
+        "timestamp": timestamp,
+        "case_id": case_id,
+        "item_id": item_id,
+        "state": state,
+        "creator": creator,
+        "owner": owner,
+        "data_length": data_length,
+        "data": data
+    }
+
 # ============================================================
 # Hashing Helpers
 # ============================================================
@@ -327,6 +351,34 @@ def blockchain_exists(path):
 def write_block(path, block):
     with open(path, "ab") as f:
         f.write(pack_block(block))
+
+def read_blocks(path):
+    blocks = []
+
+    if not blockchain_exists(path):
+        return blocks
+
+    with open(path, "rb") as f:
+        while True:
+            header = f.read(BLOCK_STRUCT.size)
+
+            if header == b"":
+                break
+
+            if len(header) != BLOCK_STRUCT.size:
+                print("Invalid blockchain file")
+                sys.exit(1)
+
+            data_length = BLOCK_STRUCT.unpack(header)[7]
+            data = f.read(data_length)
+
+            if len(data) != data_length:
+                print("Invalid blockchain file")
+                sys.exit(1)
+
+            blocks.append(unpack_block(header, data))
+
+    return blocks
 
 # ============================================================
 # Blockchain Search Helpers
@@ -384,6 +436,18 @@ def cmd_init():
         write_block(path, block)
         print("Blockchain file not found. Created INITIAL block.")
     else:
+        blocks = read_blocks(path)
+
+        if len(blocks) == 0:
+            print("Blockchain file found but INITIAL block is missing.")
+            sys.exit(1)
+
+        first_block = blocks[0]
+
+        if first_block["state"].rstrip(b'\x00') != STATE_INITIAL.encode():
+            print("Blockchain file found but INITIAL block is invalid.")
+            sys.exit(1)
+
         print("Blockchain file found with INITIAL block.")
 
 # ============================================================
