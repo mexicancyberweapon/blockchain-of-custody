@@ -42,6 +42,7 @@ import sys
 import uuid
 import struct
 import hashlib
+from Crypto.Cipher import AES
 from datetime import datetime, timezone
 
 
@@ -204,6 +205,41 @@ def store_case_id(case_id):
 
 def store_item_id(item_id):
     return int(item_id).to_bytes(4, byteorder="big").rjust(ITEM_ID_SIZE, b'\x00')
+
+def aes_encrypt_block(plain_bytes):
+    cipher = AES.new(AES_KEY, AES.MODE_ECB)
+    return cipher.encrypt(plain_bytes)
+
+
+def aes_decrypt_block(cipher_bytes):
+    cipher = AES.new(AES_KEY, AES.MODE_ECB)
+    return cipher.decrypt(cipher_bytes)
+
+
+def store_case_id(case_id):
+    # UUID is 16 raw bytes, encrypt to 16 bytes, store as 32 ASCII hex bytes
+    plain = uuid.UUID(case_id).bytes
+    encrypted = aes_encrypt_block(plain)
+    return encrypted.hex().encode()
+
+
+def store_item_id(item_id):
+    # Item ID is a 4-byte integer padded to one AES block
+    plain = struct.pack("I", int(item_id)) + (b'\x00' * 12)
+    encrypted = aes_encrypt_block(plain)
+    return encrypted.hex().encode()
+
+
+def load_case_id(stored_case_id):
+    encrypted = bytes.fromhex(stored_case_id.decode())
+    plain = aes_decrypt_block(encrypted)
+    return str(uuid.UUID(bytes=plain))
+
+
+def load_item_id(stored_item_id):
+    encrypted = bytes.fromhex(stored_item_id.decode())
+    plain = aes_decrypt_block(encrypted)
+    return str(struct.unpack("I", plain[:4])[0])
 
 # ============================================================
 # Password Helpers
