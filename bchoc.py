@@ -480,6 +480,13 @@ def get_latest_block_for_item(blocks, item_id):
 
     return latest
 
+def get_blocks_for_item(blocks, stored_item_id):
+    return [block for block in blocks if block["item_id"] == stored_item_id]
+
+
+def get_blocks_for_case(blocks, stored_case_id):
+    return [block for block in blocks if block["case_id"] == stored_case_id]
+
 # ============================================================
 # State Transition Helpers
 # ============================================================
@@ -951,6 +958,75 @@ def cmd_remove(args):
 #   Without valid password or no password, encrypted values may be shown,
 #   depending on exact command/test expectations.
 
+def cmd_show_history(args):
+    case_id = None
+    item_id = None
+    num_entries = None
+    reverse = False
+    password = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args):
+            case_id = args[i + 1]
+            i += 2
+        elif args[i] == "-i" and i + 1 < len(args):
+            item_id = args[i + 1]
+            i += 2
+        elif args[i] == "-n" and i + 1 < len(args):
+            num_entries = int(args[i + 1])
+            i += 2
+        elif args[i] in ["-r", "--reverse"]:
+            reverse = True
+            i += 1
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if case_id is not None and not validate_case_id(case_id):
+        exit_error("Invalid case ID")
+
+    if item_id is not None and not validate_item_id(item_id):
+        exit_error("Invalid item ID")
+
+    if password is not None and not is_owner_password(password):
+        exit_error("Invalid password")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    # Skip INITIAL block
+    history = [block for block in blocks if get_state(block) != STATE_INITIAL]
+
+    if case_id is not None:
+        history = get_blocks_for_case(history, store_case_id(case_id))
+
+    if item_id is not None:
+        history = get_blocks_for_item(history, store_item_id(item_id))
+
+    if reverse:
+        history = list(reversed(history))
+
+    if num_entries is not None:
+        history = history[:num_entries]
+
+    show_decrypted = password is not None and is_owner_password(password)
+
+    for block in history:
+        if show_decrypted:
+            case_display = load_case_id(block["case_id"])
+            item_display = load_item_id(block["item_id"])
+        else:
+            case_display = block["case_id"].decode()
+            item_display = block["item_id"].decode()
+
+        print(f"Case: {case_display}")
+        print(f"Item: {item_display}")
+        print(f"Action: {get_state(block)}")
+        print(f"Time: {datetime.fromtimestamp(block['timestamp'], timezone.utc).isoformat().replace('+00:00', 'Z')}")
+        print()
 
 # ============================================================
 # Command: summary
@@ -1071,6 +1147,11 @@ def main():
         cmd_checkin(sys.argv[2:])
     elif command == "remove":
         cmd_remove(sys.argv[2:])
+    elif command == "show":
+        if len(sys.argv) >= 3 and sys.argv[2] == "history":
+            cmd_show_history(sys.argv[3:])
+        else:
+            exit_error("Unknown show command")
     else:
         exit_error("Unknown command")
 
