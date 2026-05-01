@@ -199,12 +199,6 @@ def validate_item_id(item_id):
         return 0 <= value <= 0xFFFFFFFF
     except ValueError:
         return False
-    
-def store_case_id(case_id):
-    return uuid.UUID(case_id).hex.encode()
-
-def store_item_id(item_id):
-    return int(item_id).to_bytes(4, byteorder="big").rjust(ITEM_ID_SIZE, b'\x00')
 
 def aes_encrypt_block(plain_bytes):
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
@@ -500,6 +494,13 @@ def get_latest_block_for_item(blocks, item_id):
 #
 # Invalid operations should exit nonzero.
 
+def get_state(block):
+    return strip_padding(block["state"])
+
+
+def is_removed_state(state):
+    return state in [STATE_DISPOSED, STATE_DESTROYED, STATE_RELEASED]
+
 
 # ============================================================
 # Command: init
@@ -660,6 +661,66 @@ def cmd_add(args):
 #   Append block.
 #   Print expected output.
 
+def cmd_checkout(args):
+    item_id = None
+    password = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-i" and i + 1 < len(args):
+            item_id = args[i + 1]
+            i += 2
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if item_id is None:
+        exit_error("Missing item ID")
+
+    if password is None or not is_owner_password(password):
+        exit_error("Invalid password")
+
+    if not validate_item_id(item_id):
+        exit_error("Invalid item ID")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    stored_item_id = store_item_id(item_id)
+    latest_block = get_latest_block_for_item(blocks, stored_item_id)
+
+    if latest_block is None:
+        exit_error("Item does not exist")
+
+    latest_state = get_state(latest_block)
+
+    if latest_state != STATE_CHECKEDIN:
+        exit_error("Item is not checked in")
+
+    last_block = get_last_block(blocks)
+    data = b""
+
+    new_block = {
+        "prev_hash": hash_block(last_block),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "case_id": latest_block["case_id"],
+        "item_id": latest_block["item_id"],
+        "state": pad_bytes(STATE_CHECKEDOUT, STATE_SIZE),
+        "creator": latest_block["creator"],
+        "owner": owner_from_password(password),
+        "data_length": len(data),
+        "data": data
+    }
+
+    write_block(path, new_block)
+
+    print(f"Case: {load_case_id(new_block['case_id'])}")
+    print(f"Checked out item: {item_id}")
+    print("Status: CHECKEDOUT")
+    print(f"Time of action: {datetime.fromtimestamp(new_block['timestamp'], timezone.utc).isoformat().replace('+00:00', 'Z')}")
+
 
 # ============================================================
 # Command: checkin
@@ -679,6 +740,65 @@ def cmd_add(args):
 #   Append block.
 #   Print expected output.
 
+def cmd_checkin(args):
+    item_id = None
+    password = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-i" and i + 1 < len(args):
+            item_id = args[i + 1]
+            i += 2
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if item_id is None:
+        exit_error("Missing item ID")
+
+    if password is None or not is_owner_password(password):
+        exit_error("Invalid password")
+
+    if not validate_item_id(item_id):
+        exit_error("Invalid item ID")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    stored_item_id = store_item_id(item_id)
+    latest_block = get_latest_block_for_item(blocks, stored_item_id)
+
+    if latest_block is None:
+        exit_error("Item does not exist")
+
+    latest_state = get_state(latest_block)
+
+    if latest_state != STATE_CHECKEDOUT:
+        exit_error("Item is not checked out")
+
+    last_block = get_last_block(blocks)
+    data = b""
+
+    new_block = {
+        "prev_hash": hash_block(last_block),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "case_id": latest_block["case_id"],
+        "item_id": latest_block["item_id"],
+        "state": pad_bytes(STATE_CHECKEDIN, STATE_SIZE),
+        "creator": latest_block["creator"],
+        "owner": owner_from_password(password),
+        "data_length": len(data),
+        "data": data
+    }
+
+    write_block(path, new_block)
+
+    print(f"Case: {load_case_id(new_block['case_id'])}")
+    print(f"Checked in item: {item_id}")
+    print("Status: CHECKEDIN")
+    print(f"Time of action: {datetime.fromtimestamp(new_block['timestamp'], timezone.utc).isoformat().replace('+00:00', 'Z')}")
 
 # ============================================================
 # Command: remove
@@ -865,6 +985,10 @@ def main():
         cmd_init()
     elif command == "add":
         cmd_add(sys.argv[2:])
+    elif command == "checkout":
+        cmd_checkout(sys.argv[2:])
+    elif command == "checkin":
+        cmd_checkin(sys.argv[2:])
     else:
         exit_error("Unknown command")
 
