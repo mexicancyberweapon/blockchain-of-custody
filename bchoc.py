@@ -39,6 +39,7 @@
 
 import os
 import sys
+import uuid
 import struct
 import hashlib
 from datetime import datetime, timezone
@@ -164,6 +165,9 @@ def pad_bytes(value: str, length: int) -> bytes:
     b = value.encode()
     return b.ljust(length, b'\x00')[:length]
 
+def strip_padding(value: bytes) -> str:
+    return value.rstrip(b'\x00').decode()
+
 # ============================================================
 # UUID and Item ID Helpers
 # ============================================================
@@ -180,6 +184,26 @@ def pad_bytes(value: str, length: int) -> bytes:
 # Also create helpers for decrypting them when a valid password
 # is provided for show/history output.
 
+def validate_case_id(case_id):
+    try:
+        uuid.UUID(case_id)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_item_id(item_id):
+    try:
+        value = int(item_id)
+        return 0 <= value <= 0xFFFFFFFF
+    except ValueError:
+        return False
+    
+def store_case_id(case_id):
+    return uuid.UUID(case_id).hex.encode()
+
+def store_item_id(item_id):
+    return int(item_id).to_bytes(4, byteorder="big").rjust(ITEM_ID_SIZE, b'\x00')
 
 # ============================================================
 # Password Helpers
@@ -195,6 +219,19 @@ def pad_bytes(value: str, length: int) -> bytes:
 #   checkout/checkin require one of the owner passwords
 #   show commands require one of the owner passwords
 #   invalid passwords should print an error and exit nonzero
+
+def is_creator_password(password):
+    return password == PASSWORD_CREATOR
+
+
+def is_owner_password(password):
+    return password in PASSWORD_TO_OWNER
+
+
+def owner_from_password(password):
+    if password not in PASSWORD_TO_OWNER:
+        return None
+    return pad_bytes(PASSWORD_TO_OWNER[password], OWNER_SIZE)
 
 
 # ============================================================
@@ -330,6 +367,9 @@ def unpack_block(header, data):
 # Decide exactly which bytes are included in the block hash:
 #   likely the full packed block bytes.
 
+def hash_block(block):
+    return hashlib.sha256(pack_block(block)).digest()
+
 
 # ============================================================
 # Blockchain File Read / Write Helpers
@@ -395,6 +435,20 @@ def read_blocks(path):
 # These helpers will be used by add, checkout, checkin, remove,
 # show, summary, and verify.
 
+def get_last_block(blocks):
+    if len(blocks) == 0:
+        return None
+    return blocks[-1]
+
+
+def get_latest_block_for_item(blocks, item_id):
+    latest = None
+
+    for block in blocks:
+        if block["item_id"] == item_id:
+            latest = block
+
+    return latest
 
 # ============================================================
 # State Transition Helpers
@@ -471,6 +525,85 @@ def cmd_init():
 #       prev_hash = hash of previous block
 #       append block
 #       print expected output
+
+def cmd_add(args):
+    case_id = None
+    item_ids = []
+    creator = None
+    password = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args):
+            case_id = args[i + 1]
+            i += 2
+        elif args[i] == "-i" and i + 1 < len(args):
+            item_ids.append(args[i + 1])
+            i += 2
+        elif args[i] == "-g" and i + 1 < len(args):
+            creator = args[i + 1]
+            i += 2
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if case_id is None:
+        exit_error("Missing case ID")
+
+    if len(item_ids) == 0:
+        exit_error("Missing item ID")
+
+    if creator is None:
+        exit_error("Missing creator")
+
+    if password is None or not is_creator_password(password):
+        exit_error("Invalid password")
+
+    if not validate_case_id(case_id):
+        exit_error("Invalid case ID")
+
+    for item_id in item_ids:
+        if not validate_item_id(item_id):
+            exit_error("Invalid item ID")
+
+    path = get_blockchain_path()
+
+    if not blockchain_exists(path):
+        write_block(path, create_initial_block())
+
+    blocks = read_blocks(path)
+
+    for item_id in item_ids:
+        stored_item_id = store_item_id(item_id)
+
+        if get_latest_block_for_item(blocks, stored_item_id) is not None:
+            exit_error("Duplicate item ID")
+
+        last_block = get_last_block(blocks)
+        prev_hash = hash_block(last_block)
+
+        data = b""
+
+        new_block = {
+            "prev_hash": prev_hash,
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "case_id": store_case_id(case_id),
+            "item_id": stored_item_id,
+            "state": pad_bytes(STATE_CHECKEDIN, STATE_SIZE),
+            "creator": pad_bytes(creator, CREATOR_SIZE),
+            "owner": b'\x00' * OWNER_SIZE,
+            "data_length": len(data),
+            "data": data
+        }
+
+        write_block(path, new_block)
+        blocks.append(new_block)
+
+        print(f"Added item: {item_id}")
+        print("Status: CHECKEDIN")
+        print(f"Time of action: {datetime.fromtimestamp(new_block['timestamp'], timezone.utc).isoformat().replace('+00:00', 'Z')}")
 
 
 # ============================================================
@@ -670,6 +803,10 @@ def cmd_init():
 # The exact error message is usually less important than
 # the nonzero exit code, but clear messages help debugging.
 
+def exit_error(message):
+    print(message)
+    sys.exit(1)
+
 
 # ============================================================
 # Main Entry Point
@@ -690,9 +827,10 @@ def main():
 
     if command == "init":
         cmd_init()
+    elif command == "add":
+        cmd_add(sys.argv[2:])
     else:
-        print("Unknown command")
-        sys.exit(1)
+        exit_error("Unknown command")
 
 
 if __name__ == "__main__":
