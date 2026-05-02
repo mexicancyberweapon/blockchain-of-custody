@@ -1181,6 +1181,114 @@ def cmd_summary(args):
 #   print bad block information
 #   exit nonzero
 
+def cmd_verify():
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    print(f"Transactions in blockchain: {len(blocks)}")
+
+    if len(blocks) == 0:
+        print("State of blockchain: ERROR")
+        print("Bad block: INITIAL")
+        print("Initial block not found.")
+        sys.exit(1)
+
+    first_block = blocks[0]
+
+    if first_block["prev_hash"] != b'\x00' * PREV_HASH_SIZE or get_state(first_block) != STATE_INITIAL:
+        print("State of blockchain: ERROR")
+        print("Bad block: INITIAL")
+        print("Invalid initial block.")
+        sys.exit(1)
+
+    # Verify hash links
+    for i in range(1, len(blocks)):
+        expected_prev_hash = hash_block(blocks[i - 1])
+
+        if blocks[i]["prev_hash"] != expected_prev_hash:
+            print("State of blockchain: ERROR")
+            print(f"Bad block: {hash_block(blocks[i]).hex()}")
+            print(f"Parent block: {blocks[i]['prev_hash'].hex()}")
+            print("Parent block does not match previous block.")
+            sys.exit(1)
+
+    # Detect duplicate parent hashes
+    seen_parent_hashes = set()
+
+    for i in range(1, len(blocks)):
+        parent_hash = blocks[i]["prev_hash"]
+
+        if parent_hash in seen_parent_hashes:
+            print("State of blockchain: ERROR")
+            print(f"Bad block: {hash_block(blocks[i]).hex()}")
+            print(f"Parent block: {parent_hash.hex()}")
+            print("Two blocks were found with the same parent.")
+            sys.exit(1)
+
+        seen_parent_hashes.add(parent_hash)
+
+    # Verify item state transitions
+    item_states = {}
+    removed_items = set()
+
+    for block in blocks:
+        state = get_state(block)
+
+        if state == STATE_INITIAL:
+            continue
+
+        item_id = block["item_id"]
+
+        if item_id in removed_items:
+            print("State of blockchain: ERROR")
+            print(f"Bad block: {hash_block(block).hex()}")
+            print("Item checked out or checked in after removal from chain.")
+            sys.exit(1)
+
+        if item_id not in item_states:
+            if state != STATE_CHECKEDIN:
+                print("State of blockchain: ERROR")
+                print(f"Bad block: {hash_block(block).hex()}")
+                print("Item action occurred before add.")
+                sys.exit(1)
+
+            item_states[item_id] = state
+            continue
+
+        previous_state = item_states[item_id]
+
+        if state == STATE_CHECKEDIN:
+            if previous_state != STATE_CHECKEDOUT:
+                print("State of blockchain: ERROR")
+                print(f"Bad block: {hash_block(block).hex()}")
+                print("Invalid checkin transition.")
+                sys.exit(1)
+
+        elif state == STATE_CHECKEDOUT:
+            if previous_state != STATE_CHECKEDIN:
+                print("State of blockchain: ERROR")
+                print(f"Bad block: {hash_block(block).hex()}")
+                print("Invalid checkout transition.")
+                sys.exit(1)
+
+        elif state in [STATE_DISPOSED, STATE_DESTROYED, STATE_RELEASED]:
+            if previous_state != STATE_CHECKEDIN:
+                print("State of blockchain: ERROR")
+                print(f"Bad block: {hash_block(block).hex()}")
+                print("Invalid remove transition.")
+                sys.exit(1)
+
+            removed_items.add(item_id)
+
+        else:
+            print("State of blockchain: ERROR")
+            print(f"Bad block: {hash_block(block).hex()}")
+            print("Invalid block state.")
+            sys.exit(1)
+
+        item_states[item_id] = state
+
+    print("State of blockchain: CLEAN")
 
 # ============================================================
 # Argument Parsing
@@ -1258,6 +1366,8 @@ def main():
             exit_error("Unknown show command")
     elif command == "summary":
         cmd_summary(sys.argv[2:])
+    elif command == "verify":
+        cmd_verify()
     else:
         exit_error("Unknown command")
 
