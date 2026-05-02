@@ -71,7 +71,6 @@ Reference:
 OpenAI. (2024). ChatGPT [Large language model].
 openai.com/chatgpt
 
-Estimated percentage of code influenced by Generative AI:
-[65]%
+Estimated percentage of code influenced by Generative AI: 65%
 
 Generative AI was used to help plan the project structure, explain the assignment requirements, debug implementation issues, review code behavior, and suggest improvements for command parsing, blockchain validation, and README wording. The code was reviewed, edited, tested, and adjusted by our group.
