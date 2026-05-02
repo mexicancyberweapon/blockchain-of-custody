@@ -1094,6 +1094,57 @@ def cmd_show_history(args):
 #       RELEASED
 #   Print in expected format.
 
+def cmd_summary(args):
+    case_id = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args):
+            case_id = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if case_id is None:
+        exit_error("Missing case ID")
+
+    if not validate_case_id(case_id):
+        exit_error("Invalid case ID")
+
+    path = get_blockchain_path()
+    blocks = read_blocks(path)
+
+    stored_case_id = store_case_id(case_id)
+
+    unique_items = set()
+    counts = {
+        STATE_CHECKEDIN: 0,
+        STATE_CHECKEDOUT: 0,
+        STATE_DISPOSED: 0,
+        STATE_DESTROYED: 0,
+        STATE_RELEASED: 0
+    }
+
+    for block in blocks:
+        if get_state(block) == STATE_INITIAL:
+            continue
+
+        if block["case_id"] != stored_case_id:
+            continue
+
+        unique_items.add(block["item_id"])
+
+        state = get_state(block)
+        if state in counts:
+            counts[state] += 1
+
+    print(f"Case: {case_id}")
+    print(f"Total unique items: {len(unique_items)}")
+    print(f"CHECKEDIN: {counts[STATE_CHECKEDIN]}")
+    print(f"CHECKEDOUT: {counts[STATE_CHECKEDOUT]}")
+    print(f"DISPOSED: {counts[STATE_DISPOSED]}")
+    print(f"DESTROYED: {counts[STATE_DESTROYED]}")
+    print(f"RELEASED: {counts[STATE_RELEASED]}")
 
 # ============================================================
 # Command: verify
@@ -1205,9 +1256,10 @@ def main():
             cmd_show_items(sys.argv[3:])
         else:
             exit_error("Unknown show command")
+    elif command == "summary":
+        cmd_summary(sys.argv[2:])
     else:
         exit_error("Unknown command")
-
 
 if __name__ == "__main__":
     main()
