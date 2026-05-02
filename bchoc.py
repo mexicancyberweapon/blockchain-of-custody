@@ -79,7 +79,7 @@ def strip_padding(value: bytes) -> str:
     return value.rstrip(b'\x00').decode()
 
 def format_timestamp(timestamp):
-     # print timestamps in utc using the Z suffix
+    # print timestamps in utc using the Z suffix
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
 
 # ------------------------
@@ -328,6 +328,10 @@ def is_removed_state(state):
 # Command: init
 # -------------
 
+# Generative AI Used: ChatGPT (OpenAI, March 2, 2026)
+# Purpose: Helped implement and review initialization behavior, including initial block creation and extra argument validation
+# Prompt: "Help me implement and review the init command for the CSE 469 Blockchain Chain of Custody project"
+
 def cmd_init(args):
     if len(args) != 0:
         exit_error("Invalid arguments")
@@ -359,6 +363,10 @@ def cmd_init(args):
 # ------------
 # Command: add
 # ------------
+
+# Generative AI Used: ChatGPT (OpenAI, March 7, 2026)
+# Purpose: Helped implement and test adding one or more evidence items, validating input, and creating CHECKEDIN blocks
+# Prompt: "Help me implement and review the add command for the CSE 469 Blockchain Chain of Custody project"
 
 def cmd_add(args):
     # collect command-line values for adding one or more evidence items
@@ -449,6 +457,10 @@ def cmd_add(args):
 # Command: checkout
 # ------------------
 
+# Generative AI Used: ChatGPT (OpenAI, March 16, 2026)
+# Purpose: Helped implement and review checkout state transition logic and owner password handling
+# Prompt: "Help me implement and review the checkout command for the CSE 469 Blockchain Chain of Custody project"
+
 def cmd_checkout(args):
     # checkout needs an item id and a role password
     item_id = None
@@ -518,6 +530,10 @@ def cmd_checkout(args):
 # Command: checkin
 # ----------------
 
+# Generative AI Used: ChatGPT (OpenAI, March 24, 2026)
+# Purpose: Helped implement and review checkin state transition logic and owner password handling
+# Prompt: "Help me implement and review the checkin command for the CSE 469 Blockchain Chain of Custody project"
+
 def cmd_checkin(args):
     # checkin mirrors checkout but requires the item to already be checked out
     item_id = None
@@ -584,6 +600,10 @@ def cmd_checkin(args):
 # ---------------
 # Command: remove
 # ---------------
+
+# Generative AI Used: ChatGPT (OpenAI, March 29, 2026)
+# Purpose: Helped implement and review removal logic, valid removal reasons, RELEASED owner data, and final item states
+# Prompt: "Help me implement and review the remove command for the CSE 469 Blockchain Chain of Custody project"
 
 def cmd_remove(args):
     # remove closes out an item with a final reason state
@@ -677,6 +697,10 @@ def cmd_remove(args):
 # Command: show cases
 # -------------------
 
+# Generative AI Used: ChatGPT (OpenAI, April 6, 2026)
+# Purpose: Helped implement and review case listing behavior, including encrypted output and optional password-based decryption
+# Prompt: "Help me implement and review the show cases command for the CSE 469 Blockchain Chain of Custody project"
+
 def cmd_show_cases(args):
     # show all unique case IDs that appear in the chain
     password = None
@@ -716,6 +740,10 @@ def cmd_show_cases(args):
 # -------------------
 # Command: show items
 # -------------------
+
+# Generative AI Used: ChatGPT (OpenAI, April 13, 2026)
+# Purpose: Helped implement and review item listing behavior, including case filtering, encrypted output, and optional password-based decryption
+# Prompt: "Help me implement and review the show items command for the CSE 469 Blockchain Chain of Custody project"
 
 def cmd_show_items(args):
     # show all unique item IDs for a specific case
@@ -771,6 +799,10 @@ def cmd_show_items(args):
 # ---------------------
 # Command: show history
 # ---------------------
+
+# Generative AI Used: ChatGPT (OpenAI, April 20, 2026)
+# Purpose: Helped implement and review history filtering, reverse order, entry limits, encrypted output, and password-based decryption
+# Prompt: "Help me implement and review the show history command for the CSE 469 Blockchain Chain of Custody project"
 
 def cmd_show_history(args):
     # show custody history, optionally filtered by case or item
@@ -855,6 +887,10 @@ def cmd_show_history(args):
 # Command: summary
 # ----------------
 
+# Generative AI Used: ChatGPT (OpenAI, April 24, 2026)
+# Purpose: Helped implement and review case summary counts and required output formatting
+# Prompt: "Help me implement and review the summary command for the CSE 469 Blockchain Chain of Custody project"
+
 def cmd_summary(args):
     # count the activity recorded for a specific case
     case_id = None
@@ -911,6 +947,10 @@ def cmd_summary(args):
 # ---------------
 # Command: verify
 # ---------------
+
+# Generative AI Used: ChatGPT (OpenAI, April 27, 2026)
+# Purpose: Helped implement and review blockchain verification, parent hash validation, duplicate parent checks, and state transition checks
+# Prompt: "Help me implement and review the verify command for the CSE 469 Blockchain Chain of Custody project"
 
 def cmd_verify(args):
     # verify chain integrity and item state transitions
