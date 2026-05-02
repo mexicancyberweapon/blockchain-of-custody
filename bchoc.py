@@ -37,11 +37,11 @@ STATE_DESTROYED = "DESTROYED"
 STATE_RELEASED = "RELEASED"
 
 # passwords
-PASSWORD_CREATOR = "C67C"
-PASSWORD_POLICE = "P80P"
-PASSWORD_LAWYER = "L76L"
-PASSWORD_ANALYST = "A65A"
-PASSWORD_EXECUTIVE = "E69E"
+PASSWORD_CREATOR = os.environ.get("BCHOC_PASSWORD_CREATOR", "C67C")
+PASSWORD_POLICE = os.environ.get("BCHOC_PASSWORD_POLICE", "P80P")
+PASSWORD_LAWYER = os.environ.get("BCHOC_PASSWORD_LAWYER", "L76L")
+PASSWORD_ANALYST = os.environ.get("BCHOC_PASSWORD_ANALYST", "A65A")
+PASSWORD_EXECUTIVE = os.environ.get("BCHOC_PASSWORD_EXECUTIVE", "E69E")
 
 # owner role based on which valid owner password was used
 PASSWORD_TO_OWNER = {
@@ -328,7 +328,10 @@ def is_removed_state(state):
 # Command: init
 # -------------
 
-def cmd_init():
+def cmd_init(args):
+    if len(args) != 0:
+        exit_error("Invalid arguments")
+
     # create the blockchain file if needed, otherwise check the first block
     path = get_blockchain_path()
 
@@ -624,6 +627,9 @@ def cmd_remove(args):
     if reason == STATE_RELEASED and owner_info is None:
         exit_error("Missing owner information")
 
+    if reason != STATE_RELEASED and owner_info is not None:
+        exit_error("Owner information only allowed for RELEASED")
+
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
@@ -673,8 +679,18 @@ def cmd_remove(args):
 
 def cmd_show_cases(args):
     # show all unique case IDs that appear in the chain
-    if len(args) != 0:
-        exit_error("Invalid arguments")
+    password = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
+            i += 2
+        else:
+            exit_error("Invalid arguments")
+
+    if password is not None and not is_owner_password(password):
+        exit_error("Invalid password")
 
     path = get_blockchain_path()
     blocks = read_blocks(path)
@@ -687,8 +703,15 @@ def cmd_show_cases(args):
 
         seen_cases.add(block["case_id"])
 
-    for stored_case_id in sorted(seen_cases):
-        print(load_case_id(stored_case_id))
+    show_decrypted = password is not None and is_owner_password(password)
+
+    if show_decrypted:
+        cases = sorted(load_case_id(stored_case_id) for stored_case_id in seen_cases)
+    else:
+        cases = sorted(stored_case_id.decode() for stored_case_id in seen_cases)
+
+    for case in cases:
+        print(case)
 
 # -------------------
 # Command: show items
@@ -697,11 +720,15 @@ def cmd_show_cases(args):
 def cmd_show_items(args):
     # show all unique item IDs for a specific case
     case_id = None
+    password = None
 
     i = 0
     while i < len(args):
         if args[i] == "-c" and i + 1 < len(args):
             case_id = args[i + 1]
+            i += 2
+        elif args[i] == "-p" and i + 1 < len(args):
+            password = args[i + 1]
             i += 2
         else:
             exit_error("Invalid arguments")
@@ -711,6 +738,9 @@ def cmd_show_items(args):
 
     if not validate_case_id(case_id):
         exit_error("Invalid case ID")
+
+    if password is not None and not is_owner_password(password):
+        exit_error("Invalid password")
 
     path = get_blockchain_path()
     blocks = read_blocks(path)
@@ -725,11 +755,18 @@ def cmd_show_items(args):
         if block["case_id"] == stored_case_id:
             seen_items.add(block["item_id"])
 
-    # sort by the decrypted numeric value so the output is predictable
-    items = sorted(int(load_item_id(stored_item_id)) for stored_item_id in seen_items)
+    show_decrypted = password is not None and is_owner_password(password)
 
-    for item in items:
-        print(item)
+    if show_decrypted:
+        items = sorted(int(load_item_id(stored_item_id)) for stored_item_id in seen_items)
+
+        for item in items:
+            print(item)
+    else:
+        items = sorted(stored_item_id.decode() for stored_item_id in seen_items)
+
+        for item in items:
+            print(item)
 
 # ---------------------
 # Command: show history
@@ -863,13 +900,13 @@ def cmd_summary(args):
         if state in counts:
             counts[state] += 1
 
-    print(f"Case: {case_id}")
-    print(f"Total unique items: {len(unique_items)}")
-    print(f"CHECKEDIN: {counts[STATE_CHECKEDIN]}")
-    print(f"CHECKEDOUT: {counts[STATE_CHECKEDOUT]}")
-    print(f"DISPOSED: {counts[STATE_DISPOSED]}")
-    print(f"DESTROYED: {counts[STATE_DESTROYED]}")
-    print(f"RELEASED: {counts[STATE_RELEASED]}")
+    print(f"Case Summary for Case ID: {case_id}")
+    print(f"Total Evidence Items: {len(unique_items)}")
+    print(f"Checked In: {counts[STATE_CHECKEDIN]}")
+    print(f"Checked Out: {counts[STATE_CHECKEDOUT]}")
+    print(f"Disposed: {counts[STATE_DISPOSED]}")
+    print(f"Destroyed: {counts[STATE_DESTROYED]}")
+    print(f"Released: {counts[STATE_RELEASED]}")
 
 # ---------------
 # Command: verify
@@ -1013,7 +1050,7 @@ def main():
     command = sys.argv[1]
 
     if command == "init":
-        cmd_init()
+        cmd_init(sys.argv[2:])
     elif command == "add":
         cmd_add(sys.argv[2:])
     elif command == "checkout":
