@@ -79,8 +79,8 @@ def strip_padding(value: bytes) -> str:
     return value.rstrip(b'\x00').decode()
 
 def format_timestamp(timestamp):
-    # print timestamps in utc using the Z suffix
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+    # print timestamps in utc using the Z suffix, always with microseconds
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 # ------------------------
 # UUID and Item ID Helpers
@@ -93,7 +93,6 @@ def validate_case_id(case_id):
         return True
     except ValueError:
         return False
-
 
 def validate_item_id(item_id):
     # item IDs are stored as 4-byte unsigned integers
@@ -108,12 +107,10 @@ def aes_encrypt_block(plain_bytes):
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
     return cipher.encrypt(plain_bytes)
 
-
 def aes_decrypt_block(cipher_bytes):
     # decrypt exactly one AES block using ECB mode
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
     return cipher.decrypt(cipher_bytes)
-
 
 def store_case_id(case_id):
     # convert UUID to raw bytes, encrypt it, then store encrypted bytes as hex text
@@ -121,13 +118,11 @@ def store_case_id(case_id):
     encrypted = aes_encrypt_block(plain)
     return encrypted.hex().encode()
 
-
 def store_item_id(item_id):
-    # pack item ID into 4 bytes, pad to 16 bytes, encrypt, and store as hex text
-    plain = struct.pack("I", int(item_id)) + (b'\x00' * 12)
+    # pad first, then store the item ID as the last 4 bytes of the AES block
+    plain = (b'\x00' * 12) + struct.pack(">I", int(item_id))
     encrypted = aes_encrypt_block(plain)
     return encrypted.hex().encode()
-
 
 def load_case_id(stored_case_id):
     # reverse store_case_id for display when decryption is allowed
@@ -135,12 +130,11 @@ def load_case_id(stored_case_id):
     plain = aes_decrypt_block(encrypted)
     return str(uuid.UUID(bytes=plain))
 
-
 def load_item_id(stored_item_id):
-    # reverse store_item_id and return the original item number as text
+    # decrypt and read the item ID from the last 4 bytes
     encrypted = bytes.fromhex(stored_item_id.decode())
     plain = aes_decrypt_block(encrypted)
-    return str(struct.unpack("I", plain[:4])[0])
+    return str(struct.unpack(">I", plain[12:16])[0])
 
 # ----------------
 # Password Helpers
@@ -644,9 +638,6 @@ def cmd_remove(args):
     if reason not in [STATE_DISPOSED, STATE_DESTROYED, STATE_RELEASED]:
         exit_error("Invalid removal reason")
 
-    if reason == STATE_RELEASED and owner_info is None:
-        exit_error("Missing owner information")
-
     if reason != STATE_RELEASED and owner_info is not None:
         exit_error("Owner information only allowed for RELEASED")
 
@@ -667,7 +658,7 @@ def cmd_remove(args):
         exit_error("Item is not checked in")
 
     # data is only used for RELEASED owner information
-    if reason == STATE_RELEASED:
+    if reason == STATE_RELEASED and owner_info is not None:
         data = owner_info.encode()
     else:
         data = b""
@@ -724,15 +715,9 @@ def cmd_show_cases(args):
     for block in blocks:
         if get_state(block) == STATE_INITIAL:
             continue
-
         seen_cases.add(block["case_id"])
 
-    show_decrypted = password is not None and is_owner_password(password)
-
-    if show_decrypted:
-        cases = sorted(load_case_id(stored_case_id) for stored_case_id in seen_cases)
-    else:
-        cases = sorted(stored_case_id.decode() for stored_case_id in seen_cases)
+    cases = sorted(load_case_id(stored_case_id) for stored_case_id in seen_cases)
 
     for case in cases:
         print(case)
@@ -783,18 +768,10 @@ def cmd_show_items(args):
         if block["case_id"] == stored_case_id:
             seen_items.add(block["item_id"])
 
-    show_decrypted = password is not None and is_owner_password(password)
+    items = sorted(int(load_item_id(stored_item_id)) for stored_item_id in seen_items)
 
-    if show_decrypted:
-        items = sorted(int(load_item_id(stored_item_id)) for stored_item_id in seen_items)
-
-        for item in items:
-            print(item)
-    else:
-        items = sorted(stored_item_id.decode() for stored_item_id in seen_items)
-
-        for item in items:
-            print(item)
+    for item in items:
+        print(item)
 
 # ---------------------
 # Command: show history
@@ -851,8 +828,11 @@ def cmd_show_history(args):
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
-    # initial block is only the chain anchor, not item history
-    history = [block for block in blocks if get_state(block) != STATE_INITIAL]
+    # include INITIAL when showing the full log, but not when filtering by case or item
+    if case_id is None and item_id is None:
+        history = blocks[:]
+    else:
+        history = [block for block in blocks if get_state(block) != STATE_INITIAL]
 
     if case_id is not None:
         history = get_blocks_for_case(history, store_case_id(case_id))
@@ -870,7 +850,10 @@ def cmd_show_history(args):
     show_decrypted = password is not None and is_owner_password(password)
 
     for block in history:
-        if show_decrypted:
+        if get_state(block) == STATE_INITIAL:
+            case_display = "00000000-0000-0000-0000-000000000000"
+            item_display = "0"
+        elif show_decrypted:
             case_display = load_case_id(block["case_id"])
             item_display = load_item_id(block["item_id"])
         else:
