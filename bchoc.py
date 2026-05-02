@@ -14,12 +14,11 @@ import hashlib
 from Crypto.Cipher import AES
 from datetime import datetime, timezone
 
-
 # ---------
 # Constants
 # ---------
 
-# field sizes
+# fixed byte sizes used by the binary block format
 PREV_HASH_SIZE = 32
 TIMESTAMP_SIZE = 8
 CASE_ID_SIZE = 32
@@ -29,7 +28,7 @@ CREATOR_SIZE = 12
 OWNER_SIZE = 12
 DATA_LENGTH_SIZE = 4
 
-# states
+# valid block states
 STATE_INITIAL = "INITIAL"
 STATE_CHECKEDIN = "CHECKEDIN"
 STATE_CHECKEDOUT = "CHECKEDOUT"
@@ -44,7 +43,7 @@ PASSWORD_LAWYER = "L76L"
 PASSWORD_ANALYST = "A65A"
 PASSWORD_EXECUTIVE = "E69E"
 
-# password to owner mapping
+# owner role based on which valid owner password was used
 PASSWORD_TO_OWNER = {
     PASSWORD_POLICE: "POLICE",
     PASSWORD_LAWYER: "LAWYER",
@@ -55,7 +54,7 @@ PASSWORD_TO_OWNER = {
 # AES key
 AES_KEY = b"R0chLi4uLi4uLi4="
 
-# struct format
+# binary layout for the fixed portion of each block
 BLOCK_STRUCT_FORMAT = "32s d 32s 32s 12s 12s 12s I"
 BLOCK_STRUCT = struct.Struct(BLOCK_STRUCT_FORMAT)
 
@@ -71,13 +70,16 @@ def get_blockchain_path():
 # ----------------------------
 
 def pad_bytes(value: str, length: int) -> bytes:
+    # fixed-width text fields need to be null-padded to the correct length
     b = value.encode()
     return b.ljust(length, b'\x00')[:length]
 
 def strip_padding(value: bytes) -> str:
+    # remove null padding when displaying stored fields
     return value.rstrip(b'\x00').decode()
 
 def format_timestamp(timestamp):
+     # print timestamps in utc using the Z suffix
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
 
 # ------------------------
@@ -85,6 +87,7 @@ def format_timestamp(timestamp):
 # ------------------------
 
 def validate_case_id(case_id):
+    # case IDs must be valid UUID strings
     try:
         uuid.UUID(case_id)
         return True
@@ -93,6 +96,7 @@ def validate_case_id(case_id):
 
 
 def validate_item_id(item_id):
+    # item IDs are stored as 4-byte unsigned integers
     try:
         value = int(item_id)
         return 0 <= value <= 0xFFFFFFFF
@@ -100,36 +104,40 @@ def validate_item_id(item_id):
         return False
 
 def aes_encrypt_block(plain_bytes):
+    # encrypt exactly one AES block using ECB mode
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
     return cipher.encrypt(plain_bytes)
 
 
 def aes_decrypt_block(cipher_bytes):
+    # decrypt exactly one AES block using ECB mode
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
     return cipher.decrypt(cipher_bytes)
 
 
 def store_case_id(case_id):
-    # UUID is 16 raw bytes, encrypt to 16 bytes, store as 32 ASCII hex bytes
+    # convert UUID to raw bytes, encrypt it, then store encrypted bytes as hex text
     plain = uuid.UUID(case_id).bytes
     encrypted = aes_encrypt_block(plain)
     return encrypted.hex().encode()
 
 
 def store_item_id(item_id):
-    # Item ID is a 4-byte integer padded to one AES block
+    # pack item ID into 4 bytes, pad to 16 bytes, encrypt, and store as hex text
     plain = struct.pack("I", int(item_id)) + (b'\x00' * 12)
     encrypted = aes_encrypt_block(plain)
     return encrypted.hex().encode()
 
 
 def load_case_id(stored_case_id):
+    # reverse store_case_id for display when decryption is allowed
     encrypted = bytes.fromhex(stored_case_id.decode())
     plain = aes_decrypt_block(encrypted)
     return str(uuid.UUID(bytes=plain))
 
 
 def load_item_id(stored_item_id):
+    # reverse store_item_id and return the original item number as text
     encrypted = bytes.fromhex(stored_item_id.decode())
     plain = aes_decrypt_block(encrypted)
     return str(struct.unpack("I", plain[:4])[0])
@@ -139,14 +147,15 @@ def load_item_id(stored_item_id):
 # ----------------
 
 def is_creator_password(password):
+    # creator password is required for add and remove
     return password == PASSWORD_CREATOR
 
-
 def is_owner_password(password):
+    # owner passwords are used for checkout and checkin
     return password in PASSWORD_TO_OWNER
 
-
 def owner_from_password(password):
+    # convert a valid owner password into the padded owner role field
     if password not in PASSWORD_TO_OWNER:
         return None
     return pad_bytes(PASSWORD_TO_OWNER[password], OWNER_SIZE)
@@ -156,6 +165,7 @@ def owner_from_password(password):
 # -------------
 
 def create_initial_block():
+    # the first block anchors the chain and does not represent real evidence
     prev_hash = b'\x00' * 32
     timestamp = 0.0
     case_id = b"0" * 32
@@ -183,6 +193,7 @@ def create_initial_block():
 # --------------------------
 
 def pack_block(block):
+    # pack the fixed fields first, then append the variable-length data field
     header = BLOCK_STRUCT.pack(
         block["prev_hash"],
         block["timestamp"],
@@ -196,6 +207,7 @@ def pack_block(block):
     return header + block["data"]
 
 def unpack_block(header, data):
+    # convert raw bytes from the file back into the dictionary format used in code
     (
         prev_hash,
         timestamp,
@@ -224,6 +236,7 @@ def unpack_block(header, data):
 # ---------------
 
 def hash_block(block):
+    # block hashes are based on the full packed binary version of the block
     return hashlib.sha256(pack_block(block)).digest()
 
 # ------------------------------------
@@ -231,14 +244,16 @@ def hash_block(block):
 # ------------------------------------
 
 def blockchain_exists(path):
+    # simple file existence check before reading or creating the chain
     return os.path.exists(path)
 
-
 def write_block(path, block):
+    # append one packed block to the binary blockchain file
     with open(path, "ab") as f:
         f.write(pack_block(block))
 
 def read_blocks(path):
+    # read the binary file one block at a time
     blocks = []
 
     if not blockchain_exists(path):
@@ -246,6 +261,7 @@ def read_blocks(path):
 
     with open(path, "rb") as f:
         while True:
+            # each block starts with a fixed-size header
             header = f.read(BLOCK_STRUCT.size)
 
             if header == b"":
@@ -255,6 +271,7 @@ def read_blocks(path):
                 print("Invalid blockchain file")
                 sys.exit(1)
 
+            # the header tells us how many extra data bytes follow
             data_length = BLOCK_STRUCT.unpack(header)[7]
             data = f.read(data_length)
 
@@ -271,12 +288,13 @@ def read_blocks(path):
 # -------------------------
 
 def get_last_block(blocks):
+    # the newest block is always at the end of the file
     if len(blocks) == 0:
         return None
     return blocks[-1]
 
-
 def get_latest_block_for_item(blocks, item_id):
+    # scan the chain and keep the most recent block for this item
     latest = None
 
     for block in blocks:
@@ -286,10 +304,12 @@ def get_latest_block_for_item(blocks, item_id):
     return latest
 
 def get_blocks_for_item(blocks, stored_item_id):
+    # return all blocks associated with one encrypted item id
     return [block for block in blocks if block["item_id"] == stored_item_id]
 
 
 def get_blocks_for_case(blocks, stored_case_id):
+    # return all blocks associated with one encrypted case id
     return [block for block in blocks if block["case_id"] == stored_case_id]
 
 # ------------------------
@@ -297,18 +317,19 @@ def get_blocks_for_case(blocks, stored_case_id):
 # ------------------------
 
 def get_state(block):
+    # state is stored as padded bytes, so strip it before comparing
     return strip_padding(block["state"])
 
-
 def is_removed_state(state):
+    # these states mean the item is no longer active in custody
     return state in [STATE_DISPOSED, STATE_DESTROYED, STATE_RELEASED]
-
 
 # -------------
 # Command: init
 # -------------
 
 def cmd_init():
+    # create the blockchain file if needed, otherwise check the first block
     path = get_blockchain_path()
 
     if not blockchain_exists(path):
@@ -318,12 +339,14 @@ def cmd_init():
     else:
         blocks = read_blocks(path)
 
+        # an existing file should still contain a readable initial block
         if len(blocks) == 0:
             print("Blockchain file found but INITIAL block is missing.")
             sys.exit(1)
 
         first_block = blocks[0]
 
+        # the first block must be the INITIAL block
         if first_block["state"].rstrip(b'\x00') != STATE_INITIAL.encode():
             print("Blockchain file found but INITIAL block is invalid.")
             sys.exit(1)
@@ -335,6 +358,7 @@ def cmd_init():
 # ------------
 
 def cmd_add(args):
+    # collect command-line values for adding one or more evidence items
     case_id = None
     item_ids = []
     creator = None
@@ -357,6 +381,7 @@ def cmd_add(args):
         else:
             exit_error("Invalid arguments")
 
+    # check required fields before changing the blockchain
     if case_id is None:
         exit_error("Missing case ID")
 
@@ -378,6 +403,7 @@ def cmd_add(args):
 
     path = get_blockchain_path()
 
+    # add can create the chain if init was not called first
     if not blockchain_exists(path):
         write_block(path, create_initial_block())
 
@@ -386,12 +412,14 @@ def cmd_add(args):
     for item_id in item_ids:
         stored_item_id = store_item_id(item_id)
 
+        # item ids should only be added once
         if get_latest_block_for_item(blocks, stored_item_id) is not None:
             exit_error("Duplicate item ID")
 
         last_block = get_last_block(blocks)
         prev_hash = hash_block(last_block)
 
+        # normal add blocks do not use the data field
         data = b""
 
         new_block = {
@@ -419,6 +447,7 @@ def cmd_add(args):
 # ------------------
 
 def cmd_checkout(args):
+    # checkout needs an item id and a role password
     item_id = None
     password = None
 
@@ -445,6 +474,7 @@ def cmd_checkout(args):
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
+    # find the current state of this item
     stored_item_id = store_item_id(item_id)
     latest_block = get_latest_block_for_item(blocks, stored_item_id)
 
@@ -453,12 +483,14 @@ def cmd_checkout(args):
 
     latest_state = get_state(latest_block)
 
+    # checkout is only valid from CHECKEDIN
     if latest_state != STATE_CHECKEDIN:
         exit_error("Item is not checked in")
 
     last_block = get_last_block(blocks)
     data = b""
 
+    # most fields carry forward from the previous item block
     new_block = {
         "prev_hash": hash_block(last_block),
         "timestamp": datetime.now(timezone.utc).timestamp(),
@@ -484,6 +516,7 @@ def cmd_checkout(args):
 # ----------------
 
 def cmd_checkin(args):
+    # checkin mirrors checkout but requires the item to already be checked out
     item_id = None
     password = None
 
@@ -510,6 +543,7 @@ def cmd_checkin(args):
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
+    # look up the latest custody record for the item
     stored_item_id = store_item_id(item_id)
     latest_block = get_latest_block_for_item(blocks, stored_item_id)
 
@@ -518,6 +552,7 @@ def cmd_checkin(args):
 
     latest_state = get_state(latest_block)
 
+    # checkin is only valid from CHECKEDOUT
     if latest_state != STATE_CHECKEDOUT:
         exit_error("Item is not checked out")
 
@@ -548,6 +583,7 @@ def cmd_checkin(args):
 # ---------------
 
 def cmd_remove(args):
+    # remove closes out an item with a final reason state
     item_id = None
     reason = None
     password = None
@@ -591,6 +627,7 @@ def cmd_remove(args):
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
+    # remove uses the latest item block as the base snapshot
     stored_item_id = store_item_id(item_id)
     latest_block = get_latest_block_for_item(blocks, stored_item_id)
 
@@ -599,9 +636,11 @@ def cmd_remove(args):
 
     latest_state = get_state(latest_block)
 
+    # removed items must currently be checked in
     if latest_state != STATE_CHECKEDIN:
         exit_error("Item is not checked in")
 
+    # data is only used for RELEASED owner information
     if reason == STATE_RELEASED:
         data = owner_info.encode()
     else:
@@ -633,6 +672,7 @@ def cmd_remove(args):
 # -------------------
 
 def cmd_show_cases(args):
+    # show all unique case IDs that appear in the chain
     if len(args) != 0:
         exit_error("Invalid arguments")
 
@@ -655,6 +695,7 @@ def cmd_show_cases(args):
 # -------------------
 
 def cmd_show_items(args):
+    # show all unique item IDs for a specific case
     case_id = None
 
     i = 0
@@ -684,6 +725,7 @@ def cmd_show_items(args):
         if block["case_id"] == stored_case_id:
             seen_items.add(block["item_id"])
 
+    # sort by the decrypted numeric value so the output is predictable
     items = sorted(int(load_item_id(stored_item_id)) for stored_item_id in seen_items)
 
     for item in items:
@@ -694,6 +736,7 @@ def cmd_show_items(args):
 # ---------------------
 
 def cmd_show_history(args):
+    # show custody history, optionally filtered by case or item
     case_id = None
     item_id = None
     num_entries = None
@@ -739,7 +782,7 @@ def cmd_show_history(args):
     path = get_blockchain_path()
     blocks = read_blocks(path)
 
-    # Skip INITIAL block
+    # initial block is only the chain anchor, not item history
     history = [block for block in blocks if get_state(block) != STATE_INITIAL]
 
     if case_id is not None:
@@ -754,6 +797,7 @@ def cmd_show_history(args):
     if num_entries is not None:
         history = history[:num_entries]
 
+    # without a valid password, show encrypted IDs instead of decrypted IDs
     show_decrypted = password is not None and is_owner_password(password)
 
     for block in history:
@@ -775,6 +819,7 @@ def cmd_show_history(args):
 # ----------------
 
 def cmd_summary(args):
+    # count the activity recorded for a specific case
     case_id = None
 
     i = 0
@@ -831,6 +876,7 @@ def cmd_summary(args):
 # ---------------
 
 def cmd_verify(args):
+    # verify chain integrity and item state transitions
     if len(args) != 0:
         exit_error("Invalid arguments")
 
@@ -847,13 +893,14 @@ def cmd_verify(args):
 
     first_block = blocks[0]
 
+    # the chain must begin with the expected initial block
     if first_block["prev_hash"] != b'\x00' * PREV_HASH_SIZE or get_state(first_block) != STATE_INITIAL:
         print("State of blockchain: ERROR")
         print("Bad block: INITIAL")
         print("Invalid initial block.")
         sys.exit(1)
 
-    # Verify hash links
+    # each block should point to the hash of the block immediately before it
     for i in range(1, len(blocks)):
         expected_prev_hash = hash_block(blocks[i - 1])
 
@@ -864,7 +911,7 @@ def cmd_verify(args):
             print("Parent block does not match previous block.")
             sys.exit(1)
 
-    # Detect duplicate parent hashes
+    # duplicate parent hashes would mean two blocks claim the same parent
     seen_parent_hashes = set()
 
     for i in range(1, len(blocks)):
@@ -879,7 +926,7 @@ def cmd_verify(args):
 
         seen_parent_hashes.add(parent_hash)
 
-    # Verify item state transitions
+    # replay item states to make sure each action is legal
     item_states = {}
     removed_items = set()
 
@@ -891,12 +938,14 @@ def cmd_verify(args):
 
         item_id = block["item_id"]
 
+        # once removed, an item should not receive more custody actions
         if item_id in removed_items:
             print("State of blockchain: ERROR")
             print(f"Bad block: {hash_block(block).hex()}")
             print("Item checked out or checked in after removal from chain.")
             sys.exit(1)
 
+        # the first real block for an item should be its add/CHECKEDIN block
         if item_id not in item_states:
             if state != STATE_CHECKEDIN:
                 print("State of blockchain: ERROR")
@@ -947,6 +996,7 @@ def cmd_verify(args):
 # --------------
 
 def exit_error(message):
+    # print a simple error and return a nonzero exit code
     print(message)
     sys.exit(1)
 
@@ -955,6 +1005,7 @@ def exit_error(message):
 # -----
 
 def main():
+    # route the first command-line word to the correct handler
     if len(sys.argv) < 2:
         print("No command provided")
         sys.exit(1)
